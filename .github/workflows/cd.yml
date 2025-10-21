@@ -1,0 +1,63 @@
+name: CD Pipeline
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'demo'
+        type: choice
+        options: [ demo, staging, production ]
+  push:
+    branches: [ main ]
+    paths-ignore: [ 'docs/**', '**.md' ]
+env:
+  AWS_REGION: eu-west-1
+  APP_NAME: devops-api
+  TF_VERSION: 1.5.0
+  REGISTRY: ghcr.io
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: ${{ github.event.inputs.environment || 'demo' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: ${{ env.TF_VERSION }} }
+
+      - name: Terraform Init/Apply
+        run: |
+          cd infra/terraform
+          terraform init
+          terraform apply -auto-approve \
+            -var="docker_image_repo=${{ env.REGISTRY }}/${{ github.repository }}/${{ env.APP_NAME }}" \
+            -var="docker_image_tag=${{ github.sha }}"
+
+      - name: Get Instance Details
+        id: instance
+        run: |
+          cd infra/terraform
+          echo "instance_ip=$(terraform output -raw instance_public_ip)" >> $GITHUB_OUTPUT
+          echo "instance_id=$(terraform output -raw instance_id)" >> $GITHUB_OUTPUT
+
+      - name: Deploy App via SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2-key.pem
+          chmod 600 ~/.ssh/ec2-key.pem
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/ec2-key.pem scripts/deploy.sh ubuntu@${{ steps.instance.outputs.instance_ip }}:/tmp/
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/ec2-key.pem ubuntu@${{ steps.instance.outputs.instance_ip }} \
+            "chmod +x /tmp/deploy.sh && IMAGE_REPO=${{ env.REGISTRY }}/${{ github.repository }}/${{ env.APP_NAME }} VERSION=${{ github.sha }} /tmp/deploy.sh"
+
+      - name: Smoke Tests
+        run: |
+          APP_URL="http://${{ steps.instance.outputs.instance_ip }}"
+          curl -f ${APP_URL}/healthz
+          curl -f ${APP_URL}/version
+          curl -X POST ${APP_URL}/backup
