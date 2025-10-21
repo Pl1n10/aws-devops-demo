@@ -1,13 +1,17 @@
 #!/bin/bash
+set -euo pipefail
+TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+INSTANCE_TYPE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
 set -e
 exec > >(tee /var/log/user-data.log) 2>&1
 
-APP_NAME="${app_name}"
-AWS_REGION="${aws_region}"
-BACKUP_BUCKET="${backup_bucket}"
-ARTIFACTS_BUCKET="${artifacts_bucket}"
-IMAGE_REPO="${image_repo}"
-IMAGE_TAG="${image_tag}"
+APP_NAME="${APP_NAME}"
+AWS_REGION="${AWS_REGION}"
+BACKUP_BUCKET="${BACKUP_BUCKET}"
+ARTIFACTS_BUCKET="${ARTIFACTS_BUCKET}"
+IMAGE_REPO="${IMAGE_REPO}"
+IMAGE_TAG="${IMAGE_TAG}"
 INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
 
 apt-get update
@@ -28,7 +32,7 @@ BACKUP_BUCKET=${BACKUP_BUCKET}
 ARTIFACTS_BUCKET=${ARTIFACTS_BUCKET}
 IMAGE_REPO=${IMAGE_REPO}
 IMAGE_TAG=${IMAGE_TAG}
-INSTANCE_ID=${INSTANCE_ID}
+INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
 EOC
 
 # CloudWatch Agent
@@ -50,7 +54,7 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<EOC
   },
   "metrics": {
     "namespace": "CWAgent",
-    "append_dimensions": { "InstanceId": "${INSTANCE_ID}", "InstanceType": "${INSTANCE_TYPE}" },
+    "append_dimensions": { "InstanceId": "$(curl -s http://169.254.169.254/latest/meta-data/instance-id)", "InstanceType": "$INSTANCE_TYPE" },
     "metrics_collected": {
       "cpu": { "measurement": ["cpu_usage_user","cpu_usage_system",{ "name":"cpu_usage_idle","rename":"CPU_IDLE","unit":"Percent"},{ "name":"cpu_usage_iowait","unit":"Percent"}], "metrics_collection_interval": 60, "resources": ["*"], "totalcpu": false },
       "disk": { "measurement": [{ "name":"used_percent","rename":"DISK_USED","unit":"Percent" },"disk_free"], "metrics_collection_interval": 60, "resources": ["/"], "ignore_file_system_types": ["sysfs","devtmpfs","tmpfs"] },
@@ -114,7 +118,7 @@ ExecStartPre=/usr/bin/docker pull ${IMAGE_REPO}:${IMAGE_TAG}
 ExecStart=/usr/bin/docker run --rm --name ${APP_NAME} -p 80:80 \
   -v /var/log/app:/var/log/app \
   -e AWS_REGION=${AWS_REGION} -e BACKUP_BUCKET=${BACKUP_BUCKET} \
-  -e APP_VERSION=${IMAGE_TAG} -e INSTANCE_ID=${INSTANCE_ID} \
+  -e APP_VERSION=${IMAGE_TAG} -e INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id) \
   ${IMAGE_REPO}:${IMAGE_TAG}
 ExecStop=/usr/bin/docker stop ${APP_NAME}
 
@@ -126,7 +130,7 @@ EOC
 cat > /opt/app/health-check.sh <<'EOC'
 #!/bin/bash
 URL="http://localhost/healthz"
-CODE=$(curl -s -o /dev/null -w "%{http_code}" $URL)
+CODE=$(curl -s -o /dev/null -w "%%%{http_code}" $URL)
 if [ "$CODE" != "200" ]; then
   echo "$(date) - Health check failed: $CODE" >> /var/log/app/health-check.log
   systemctl restart app.service

@@ -93,13 +93,13 @@ resource "aws_instance" "app" {
   vpc_security_group_ids = [aws_security_group.app.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
 
-  user_data = base64encode(templatefile("${path.module}/userdata.sh", {
-    app_name         = var.app_name
-    aws_region       = var.aws_region
-    backup_bucket    = aws_s3_bucket.backup.id
-    artifacts_bucket = aws_s3_bucket.artifacts.id
-    image_repo       = var.docker_image_repo
-    image_tag        = var.docker_image_tag
+    user_data = base64encode(templatefile("${path.module}/userdata.sh", {
+    APP_NAME         = var.app_name
+    AWS_REGION       = var.aws_region
+    BACKUP_BUCKET    = aws_s3_bucket.backup.id
+    ARTIFACTS_BUCKET = aws_s3_bucket.artifacts.id
+    IMAGE_REPO       = var.docker_image_repo
+    IMAGE_TAG        = var.docker_image_tag
   }))
 
   root_block_device {
